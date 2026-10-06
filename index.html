@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Inventario por foto</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="theme-color" content="#2f7d4f">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Inventario">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);--bg:#f6f5f1;--card:#fff;--tx:#1f2a24;--mu:#6b756e;--ac:#2f7d4f;--ac2:#e6f2ea;--bd:#dcdad2;--er:#b3402f}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#151a17;--card:#1f2622;--tx:#eef2ef;--mu:#9aa59e;--ac:#4cb374;--ac2:#243a2c;--bd:#33403a;--er:#e07a68}}
+:root[data-theme="dark"]{--bg:#151a17;--card:#1f2622;--tx:#eef2ef;--mu:#9aa59e;--ac:#4cb374;--ac2:#243a2c;--bd:#33403a;--er:#e07a68}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*,*:before,*:after{box-sizing:inherit}
+body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+main{max-width:520px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:4px 0 12px}
+.tabs{display:flex;gap:6px;margin-bottom:12px}
+.tabs button{flex:1;padding:10px;border:1px solid var(--bd);background:var(--card);color:var(--tx);border-radius:10px;font-size:15px}
+.tabs button.on{background:var(--ac);color:#fff;border-color:var(--ac)}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:14px;margin-bottom:12px}
+.row{display:flex;gap:8px}
+.big{flex:1;padding:16px 8px;border:0;border-radius:12px;background:var(--ac);color:#fff;font-size:16px;font-weight:600}
+.big.alt{background:var(--ac2);color:var(--ac)}
+label{display:block;font-size:13px;color:var(--mu);margin:10px 0 4px}
+input,select{width:100%;padding:11px;border:1px solid var(--bd);border-radius:10px;background:var(--bg);color:var(--tx);font-size:16px}
+.btn{padding:12px;border:0;border-radius:10px;background:var(--ac);color:#fff;font-size:16px;font-weight:600;width:100%;margin-top:14px}
+.ghost{background:none;border:1px solid var(--bd);color:var(--tx)}
+.msg{font-size:14px;color:var(--mu);margin:8px 0}.err{color:var(--er)}
+img.pv{width:100%;max-height:200px;object-fit:cover;border-radius:10px;margin-bottom:8px}
+.it{display:flex;justify-content:space-between;gap:8px;padding:10px 0;border-bottom:1px solid var(--bd)}
+.it:last-child{border:0}.it small{color:var(--mu);display:block}
+.it b{font-weight:600}.x{background:none;border:0;color:var(--er);font-size:18px}
+.hide{display:none}
+</style></head><body><main>
+<h1>📦 Inventario por foto</h1>
+<div id="srv" class="msg" style="min-height:20px;margin-top:-6px"></div>
+<div class="tabs"><button id="t1" class="on">Registrar</button><button id="t2">Inventario (<span id="n">0</span>)</button></div>
+
+<section id="v1">
+ <div class="card">
+  <div class="row">
+   <button class="big" id="bFoto">📷 Foto del producto</button>
+   <button class="big alt" id="bCod">▮▮ Código de barras</button>
+  </div>
+  <input type="file" id="fFoto" accept="image/*" capture="environment" class="hide">
+  <input type="file" id="fCod" accept="image/*" capture="environment" class="hide">
+  <label>…o escribí el código de barras</label>
+  <div class="row"><input id="codMan" inputmode="numeric" placeholder="Ej: 7840058001234"><button class="ghost btn" id="bBuscar" style="width:auto;margin:0;padding:0 16px">Buscar</button></div>
+  <div class="msg" id="st"></div>
+ </div>
+ <div class="card hide" id="form">
+  <img id="pv" class="pv hide" alt="">
+  <label>Producto</label><input id="prod">
+  <label>Marca</label><input id="marca">
+  <div class="row"><div style="flex:1"><label>Cantidad existente</label><input id="cant" type="number" inputmode="decimal" step="any" min="0"></div>
+  <div style="flex:1"><label>Unidad de medida</label><select id="uni"></select></div></div>
+  <input type="hidden" id="cod">
+  <button class="btn" id="bGuardar">Guardar en inventario</button>
+  <button class="btn ghost" id="bCancel">Cancelar</button>
+ </div>
+</section>
+
+<section id="v2" class="hide">
+ <div class="card"><div id="lista"></div>
+  <button class="btn" id="bXls">⬇ Exportar a Excel</button>
+  <button class="btn ghost" id="bVaciar">Vaciar inventario</button>
+  <div class="msg" id="st2"></div></div>
+</section>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const API="https://TU-BACKEND.onrender.com"; // cambiá por la URL de tu servicio en Render
+const UN=["unidad","kg","g","litro","ml","caja","paquete","botella","lata","bolsa","atado","docena"];
+$("uni").innerHTML=UN.map(u=>`<option>${u}</option>`).join("");
+let inv=[];
+let KEY="";try{KEY=localStorage.getItem("k")||""}catch(e){}
+let lastOk=0,ready=Promise.resolve();
+function despertar(){
+ const el=$("srv"),t0=Date.now();
+ return new Promise(res=>{
+  const ping=async()=>{
+   el.className="msg";el.textContent=`⏳ Despertando el servidor… ${Math.round((Date.now()-t0)/1000)} s (puede tardar hasta 1 minuto)`;
+   try{
+    const c=new AbortController(),to=setTimeout(()=>c.abort(),8000);
+    const r=await fetch(API+"/",{signal:c.signal});clearTimeout(to);
+    if(r.ok){lastOk=Date.now();el.textContent="🟢 Servidor listo";setTimeout(()=>{if(el.textContent.startsWith("🟢"))el.textContent=""},2500);return res()}
+   }catch(e){}
+   if(Date.now()-t0>120000){el.className="msg err";el.textContent="El servidor no responde. Cerrá y volvé a abrir la app en un momento.";return res()}
+   setTimeout(ping,2500);
+  };
+  ping();
+ });
+}
+document.addEventListener("visibilitychange",()=>{if(!document.hidden&&Date.now()-lastOk>10*60*1000)ready=despertar()});
+async function api(p,o={}){
+ await ready;
+ o.headers={...(o.headers||{}),"X-App-Key":KEY};
+ const r=await fetch(API+p,o);
+ if(r.status===401&&!o._r){KEY=prompt("Clave de acceso de la app:")||"";try{localStorage.setItem("k",KEY)}catch(e){}o._r=1;return api(p,o)}
+ if(!r.ok)throw r.status;
+ lastOk=Date.now();
+ return r.status===204?null:r.json();
+}
+async function cargar(){try{inv=await api("/inventario")}catch(e){$("lista").innerHTML='<div class="msg err">No se pudo conectar con el servidor.</div>';return}render()}
+const pad=n=>String(n).padStart(2,"0");
+const now=()=>{const d=new Date();return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`};
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const st=(t,e)=>{$("st").textContent=t;$("st").className="msg"+(e?" err":"")};
+
+function tab(n){$("v1").classList.toggle("hide",n!=1);$("v2").classList.toggle("hide",n!=2);$("t1").classList.toggle("on",n==1);$("t2").classList.toggle("on",n==2);if(n==2)cargar()}
+$("t1").onclick=()=>tab(1);$("t2").onclick=()=>tab(2);
+
+function render(){
+ $("n").textContent=inv.length;
+ $("lista").innerHTML=inv.length?inv.map((r,i)=>`<div class="it"><div><b>${esc(r.producto)}</b>${r.marca?" · "+esc(r.marca):""}<small>${esc(r.fecha)}</small></div><div style="text-align:right"><b>${esc(r.cantidad)} ${esc(r.unidad)}</b><button class="x" data-id="${r.id}">✕</button></div></div>`).reverse().join(""):'<div class="msg">Todavía no hay registros.</div>';
+ document.querySelectorAll(".x").forEach(b=>b.onclick=async()=>{try{await api("/inventario/"+b.dataset.id,{method:"DELETE"});cargar()}catch(e){}});
+}
+
+function showForm(d,blob){
+ $("prod").value=d.producto||"";$("marca").value=d.marca||"";$("cod").value=d.codigo||"";
+ $("cant").value="";if(d.unidad&&!UN.includes(d.unidad)){$("uni").insertAdjacentHTML("afterbegin",`<option>${esc(d.unidad)}</option>`)}
+ $("uni").value=d.unidad||"unidad";
+ if(blob){$("pv").src=URL.createObjectURL(blob);$("pv").classList.remove("hide")}else $("pv").classList.add("hide");
+ $("form").classList.remove("hide");$("cant").focus();
+}
+
+async function shrink(file){
+ const bm=await createImageBitmap(file),s=Math.min(1,1024/Math.max(bm.width,bm.height));
+ const c=document.createElement("canvas");c.width=bm.width*s;c.height=bm.height*s;
+ c.getContext("2d").drawImage(bm,0,0,c.width,c.height);
+ return {bm,blob:await new Promise(r=>c.toBlob(r,"image/jpeg",.8))};
+}
+
+$("bFoto").onclick=()=>$("fFoto").click();
+$("bCod").onclick=()=>$("fCod").click();
+
+$("fFoto").onchange=async e=>{
+ const f=e.target.files[0];e.target.value="";if(!f)return;
+ st("Reconociendo producto… (la primera vez puede tardar hasta un minuto)");
+ try{
+  const {blob}=await shrink(f);
+  const fd=new FormData();fd.append("file",blob,"foto.jpg");
+  const d=await api("/reconocer",{method:"POST",body:fd});
+  if(d.codigo){try{const c=await api("/catalogo/"+encodeURIComponent(d.codigo));d.producto=c.producto;d.marca=c.marca;d.unidad=c.unidad||d.unidad}catch(e){}}
+  showForm(d,blob);st(d.producto?"Revisá los datos y completá la cantidad.":"No pude identificarlo. Completá a mano.",!d.producto);
+ }catch(er){showForm({},null);st("No se pudo reconocer. Completá a mano.",1)}
+};
+
+async function porCodigo(code){
+ code=String(code).trim();if(!code)return;
+ let c=null;try{c=await api("/catalogo/"+encodeURIComponent(code))}catch(e){}
+ showForm(c?{...c,codigo:code}:{codigo:code},null);
+ st(c?"Producto encontrado en tu catálogo.":"Código nuevo: ingresá el nombre una vez y quedará guardado.");
+}
+$("fCod").onchange=async e=>{
+ const f=e.target.files[0];e.target.value="";if(!f)return;
+ if(!("BarcodeDetector" in window)){return st("Este navegador no lee códigos desde foto. Escribí el número.",1)}
+ try{
+  const {bm}=await shrink(f);
+  const r=await new BarcodeDetector().detect(bm);
+  r.length?porCodigo(r[0].rawValue):st("No se detectó ningún código. Probá de nuevo o escribilo.",1);
+ }catch(er){st("No se pudo leer el código.",1)}
+};
+$("bBuscar").onclick=()=>porCodigo($("codMan").value);
+
+$("bGuardar").onclick=async()=>{
+ const p=$("prod").value.trim(),q=parseFloat($("cant").value);
+ if(!p)return st("Falta el nombre del producto.",1);
+ if(isNaN(q)||q<0)return st("Ingresá una cantidad válida.",1);
+ const r={producto:p,marca:$("marca").value.trim(),cantidad:q,unidad:$("uni").value,codigo:$("cod").value};
+ try{await api("/inventario",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(r)})}catch(e){return st("No se pudo guardar. Reintentá.",1)}
+ $("form").classList.add("hide");$("codMan").value="";st("Guardado ✓ — podés registrar otro producto.");
+ cargar();
+};
+$("bCancel").onclick=()=>{$("form").classList.add("hide");st("")};
+
+$("bVaciar").onclick=async()=>{if(confirm("¿Borrar todo el inventario actual?")){try{await api("/inventario",{method:"DELETE"});cargar()}catch(e){}}};
+$("bXls").onclick=async()=>{
+ const s2=t=>$("st2").textContent=t;
+ if(!inv.length)return s2("No hay registros para exportar.");
+ const rows=[["Fecha de operación","Producto","Marca","Cantidad existente","Unidad de medida","Código de barras"],...inv.map(r=>[r.fecha,r.producto,r.marca,r.cantidad,r.unidad,r.codigo])];
+ try{
+  const wb=XLSX.utils.book_new(),ws=XLSX.utils.aoa_to_sheet(rows);
+  ws["!cols"]=[{wch:18},{wch:32},{wch:16},{wch:18},{wch:16},{wch:18}];
+  XLSX.utils.book_append_sheet(wb,ws,"Inventario");
+  XLSX.writeFile(wb,"inventario_"+now().slice(0,10)+".xlsx");
+  s2("Excel generado ✓");
+ }catch(er){s2("No se pudo generar el Excel.")}
+};
+ready=despertar();cargar();
+</script></body></html>
