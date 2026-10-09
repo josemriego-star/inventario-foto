@@ -40,6 +40,13 @@ img.pv{width:100%;max-height:240px;object-fit:contain;background:var(--bg);borde
 .it:last-child{border:0}.it small{color:var(--mu);display:block}
 .it b{font-weight:600}.x{background:none;border:0;color:var(--er);font-size:18px}
 .hide{display:none}
+#scan{position:fixed;inset:0;background:#000;z-index:10;display:flex;flex-direction:column}
+#scan.hide{display:none}
+#scan video{flex:1;width:100%;min-height:0;object-fit:cover}
+.guia{position:absolute;left:8%;right:8%;top:50%;height:28%;transform:translateY(-50%);border:3px solid #fff;border-radius:14px;box-shadow:0 0 0 9999px rgba(0,0,0,.45);pointer-events:none}
+.sbar{position:absolute;left:0;right:0;top:env(safe-area-inset-top,0px);display:flex;justify-content:space-between;padding:12px;gap:8px}
+.sbar button{padding:10px 14px;border:0;border-radius:10px;background:rgba(255,255,255,.92);color:#000;font-size:15px;font-weight:600}
+#sMsg{position:absolute;left:0;right:0;bottom:calc(24px + env(safe-area-inset-bottom,0px));text-align:center;color:#fff;font-size:15px;padding:0 16px}
 </style></head><body><main>
 <h1>📦 Inventario por foto</h1>
 <div id="srv" class="msg" style="min-height:20px;margin-top:-6px"></div>
@@ -53,6 +60,7 @@ img.pv{width:100%;max-height:240px;object-fit:contain;background:var(--bg);borde
   </div>
   <input type="file" id="fFoto" accept="image/*" capture="environment" class="hide">
   <input type="file" id="fCod" accept="image/*" capture="environment" class="hide">
+  <button class="ghost btn" id="bCodFoto" style="margin-top:8px;padding:8px;font-size:14px">Leer el código desde una foto</button>
   <label>…o escribí el código de barras</label>
   <div class="row"><input id="codMan" inputmode="numeric" placeholder="Ej: 7840058001234"><button class="ghost btn" id="bBuscar" style="width:auto;margin:0;padding:0 16px">Buscar</button></div>
   <div class="msg" id="st"></div>
@@ -66,16 +74,19 @@ img.pv{width:100%;max-height:240px;object-fit:contain;background:var(--bg);borde
   <input type="hidden" id="cod">
   <button class="btn" id="bGuardar">Guardar en inventario</button>
   <button class="btn ghost" id="bCancel">Cancelar</button>
+  <div id="dup" class="hide" style="margin-top:12px;border-top:1px solid var(--bd);padding-top:12px"><div id="dupMsg" class="msg" style="color:var(--tx)"></div><button class="btn" id="dSum"></button><button class="btn ghost" id="dRep"></button><button class="btn ghost" id="dAp">Agregar como línea aparte</button></div>
  </div>
 </section>
 
 <section id="v2" class="hide">
  <div class="card"><div id="lista"></div>
   <button class="btn" id="bXls">⬇ Exportar a Excel</button>
+  <button class="btn ghost" id="bCerrar">📁 Cerrar inventario y empezar uno nuevo</button>
   <button class="btn ghost" id="bVaciar">Vaciar inventario</button>
   <div class="msg" id="st2"></div></div>
 </section>
 <div id="zoom" class="hide"><img id="zimg" alt=""></div>
+<div id="scan" class="hide"><video id="sVid" playsinline muted></video><div class="guia"></div><div class="sbar"><button id="sClose">✕ Cerrar</button><button id="sTorch" class="hide">🔦 Linterna</button></div><div id="sMsg"></div></div>
 </main>
 <script>
 const $=id=>document.getElementById(id);
@@ -131,7 +142,7 @@ function showForm(d,blob){
  $("cant").value="";if(d.unidad&&!UN.includes(d.unidad)){$("uni").insertAdjacentHTML("afterbegin",`<option>${esc(d.unidad)}</option>`)}
  $("uni").value=d.unidad||"unidad";
  if(blob){$("pv").src=URL.createObjectURL(blob);$("pv").classList.remove("hide")}else $("pv").classList.add("hide");
- $("form").classList.remove("hide");$("cant").focus();
+ $("dup").classList.add("hide");$("form").classList.remove("hide");$("cant").focus();
 }
 
 async function shrink(file){
@@ -142,7 +153,7 @@ async function shrink(file){
 }
 
 $("bFoto").onclick=()=>$("fFoto").click();
-$("bCod").onclick=()=>$("fCod").click();
+$("bCod").onclick=abrirScan;$("bCodFoto").onclick=()=>$("fCod").click();
 
 $("fFoto").onchange=async e=>{
  const f=e.target.files[0];e.target.value="";if(!f)return;
@@ -182,17 +193,34 @@ $("fCod").onchange=async e=>{
 };
 $("bBuscar").onclick=()=>porCodigo($("codMan").value);
 
+const norm=t=>String(t||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]/g,"");
+const nk=x=>norm(x.producto)+"|"+norm(x.marca)+"|"+x.unidad;
+const r3=n=>Math.round(n*1000)/1000;
+async function guardar(modo,ex,r){
+ const H={"Content-Type":"application/json"};
+ try{
+  if(modo==="aparte"||!ex)await api("/inventario",{method:"POST",headers:H,body:JSON.stringify(r)});
+  else await api("/inventario/"+ex.id,{method:"PUT",headers:H,body:JSON.stringify({cantidad:modo==="sumar"?r3(ex.cantidad+r.cantidad):r.cantidad})});
+ }catch(e){return st("No se pudo guardar. Reintentá.",1)}
+ $("form").classList.add("hide");$("dup").classList.add("hide");$("codMan").value="";
+ st("Guardado ✓ — podés registrar otro producto.");cargar();
+}
 $("bGuardar").onclick=async()=>{
  const p=$("prod").value.trim(),q=parseFloat($("cant").value);
  if(!p)return st("Falta el nombre del producto.",1);
  if(isNaN(q)||q<0)return st("Ingresá una cantidad válida.",1);
  const r={producto:p,marca:$("marca").value.trim(),cantidad:q,unidad:$("uni").value,codigo:$("cod").value};
- try{await api("/inventario",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(r)})}catch(e){return st("No se pudo guardar. Reintentá.",1)}
- $("form").classList.add("hide");$("codMan").value="";st("Guardado ✓ — podés registrar otro producto.");
- cargar();
+ const ex=[...inv].reverse().find(x=>nk(x)===nk(r));
+ if(!ex)return guardar("nuevo",null,r);
+ $("dupMsg").textContent=`Ya registraste "${ex.producto}" en este inventario: ${ex.cantidad} ${ex.unidad}. ¿Qué hacés con los ${r.cantidad} nuevos?`;
+ $("dSum").textContent=`➕ Sumar (quedan ${r3(ex.cantidad+r.cantidad)} ${r.unidad})`;
+ $("dRep").textContent=`🔁 Reemplazar por ${r.cantidad} ${r.unidad}`;
+ $("dSum").onclick=()=>guardar("sumar",ex,r);$("dRep").onclick=()=>guardar("reemplazar",ex,r);$("dAp").onclick=()=>guardar("aparte",ex,r);
+ $("dup").classList.remove("hide");
 };
 $("bCancel").onclick=()=>{$("form").classList.add("hide");st("")};
 
+$("bCerrar").onclick=async()=>{if(confirm("¿Cerrar este inventario y empezar uno nuevo? Descargá el Excel antes. Los productos quedan guardados para reconocerlos en el próximo.")){try{await api("/inventario/cerrar",{method:"POST"});cargar()}catch(e){}}};
 $("bVaciar").onclick=async()=>{if(confirm("¿Borrar todo el inventario actual?")){try{await api("/inventario",{method:"DELETE"});cargar()}catch(e){}}};
 $("bXls").onclick=async()=>{
  const s2=t=>$("st2").textContent=t;
@@ -202,10 +230,66 @@ $("bXls").onclick=async()=>{
   const wb=XLSX.utils.book_new(),ws=XLSX.utils.aoa_to_sheet(rows);
   ws["!cols"]=[{wch:18},{wch:32},{wch:16},{wch:18},{wch:16},{wch:18}];
   XLSX.utils.book_append_sheet(wb,ws,"Inventario");
+  const g={};inv.forEach(r=>{const k=nk(r),x=g[k]=g[k]||{producto:r.producto,marca:r.marca,unidad:r.unidad,cantidad:0,fecha:r.fecha};x.cantidad=r3(x.cantidad+r.cantidad);if(r.fecha>x.fecha)x.fecha=r.fecha});
+  const ws2=XLSX.utils.aoa_to_sheet([["Producto","Marca","Cantidad total","Unidad de medida","Última operación"],...Object.values(g).map(x=>[x.producto,x.marca,x.cantidad,x.unidad,x.fecha])]);
+  ws2["!cols"]=[{wch:32},{wch:16},{wch:16},{wch:16},{wch:18}];
+  XLSX.utils.book_append_sheet(wb,ws2,"Resumen");
   XLSX.writeFile(wb,"inventario_"+now().slice(0,10)+".xlsx");
   s2("Excel generado ✓");
  }catch(er){s2("No se pudo generar el Excel.")}
 };
+let scan={stream:null,timer:null,hint:null};
+function cerrarScan(){
+ clearTimeout(scan.timer);clearTimeout(scan.hint);
+ if(scan.stream){scan.stream.getTracks().forEach(t=>t.stop());scan.stream=null}
+ $("sVid").srcObject=null;$("scan").classList.add("hide");
+}
+async function abrirScan(){
+ if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){st("Este navegador no permite escaneo en vivo. Usá la foto o escribí el número.",1);return $("fCod").click()}
+ $("scan").classList.remove("hide");$("sMsg").textContent="Apuntá al código de barras";$("sTorch").classList.add("hide");
+ try{scan.stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:1280},height:{ideal:720}},audio:false})}
+ catch(e){cerrarScan();return st("No se pudo abrir la cámara. Permití el acceso o usá la foto.",1)}
+ const v=$("sVid");v.srcObject=scan.stream;
+ try{await v.play()}catch(e){}
+ const tr=scan.stream.getVideoTracks()[0];
+ try{
+  const cp=tr.getCapabilities?tr.getCapabilities():{};
+  if(cp.focusMode&&cp.focusMode.includes("continuous"))await tr.applyConstraints({advanced:[{focusMode:"continuous"}]});
+  if(cp.torch){let on=false;$("sTorch").classList.remove("hide");$("sTorch").onclick=async()=>{on=!on;try{await tr.applyConstraints({advanced:[{torch:on}]})}catch(e){}}}
+ }catch(e){}
+ const FM=["ean_13","ean_8","upc_a","upc_e","code_128","code_39"];
+ let det=null;
+ if("BarcodeDetector" in window){try{det=new BarcodeDetector({formats:FM})}catch(e){try{det=new BarcodeDetector()}catch(e2){}}}
+ let zr=null;
+ if(window.ZXing){
+  const Z=ZXing,h=new Map();
+  h.set(Z.DecodeHintType.TRY_HARDER,true);
+  h.set(Z.DecodeHintType.POSSIBLE_FORMATS,[Z.BarcodeFormat.EAN_13,Z.BarcodeFormat.EAN_8,Z.BarcodeFormat.UPC_A,Z.BarcodeFormat.UPC_E,Z.BarcodeFormat.CODE_128,Z.BarcodeFormat.CODE_39]);
+  zr=new Z.MultiFormatReader();zr.setHints(h);
+ }
+ if(!det&&!zr){cerrarScan();st("No se pudo iniciar el lector. Usá la foto o escribí el número.",1);return $("fCod").click()}
+ const cv=document.createElement("canvas"),cx=cv.getContext("2d",{willReadFrequently:true});
+ scan.hint=setTimeout(()=>{$("sMsg").textContent="Probá con más luz y a unos 15–20 cm del código"},8000);
+ const tick=async()=>{
+  if(!scan.stream)return;
+  let code="";
+  if(v.readyState>=2&&v.videoWidth){
+   if(det){try{const r=await det.detect(v);if(r.length)code=r[0].rawValue}catch(e){det=null}}
+   if(!code&&!det&&zr){
+    try{
+     cv.width=v.videoWidth;cv.height=v.videoHeight;cx.drawImage(v,0,0);
+     const bmp=new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(new ZXing.HTMLCanvasElementLuminanceSource(cv)));
+     code=zr.decode(bmp).getText();
+    }catch(e){}
+   }
+  }
+  if(code){cerrarScan();if(navigator.vibrate)navigator.vibrate(80);return porCodigo(code)}
+  scan.timer=setTimeout(tick,det?150:250);
+ };
+ tick();
+}
+$("sClose").onclick=cerrarScan;
+document.addEventListener("visibilitychange",()=>{if(document.hidden)cerrarScan()});
 $("pv").onclick=()=>{$("zimg").src=$("pv").src;$("zoom").classList.remove("hide")};
 $("zoom").onclick=()=>$("zoom").classList.add("hide");
 ready=despertar();cargar();

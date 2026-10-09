@@ -43,6 +43,7 @@ def iniciar():
             id SERIAL PRIMARY KEY, fecha TIMESTAMPTZ NOT NULL DEFAULT now(),
             producto TEXT NOT NULL, marca TEXT DEFAULT '', cantidad NUMERIC NOT NULL,
             unidad TEXT NOT NULL, codigo TEXT DEFAULT '')""")
+        c.execute("ALTER TABLE inventario ADD COLUMN IF NOT EXISTS archivado BOOLEAN NOT NULL DEFAULT false")
 
 
 class Item(BaseModel):
@@ -64,7 +65,7 @@ def listar():
         return c.execute("""SELECT id,
             to_char(fecha AT TIME ZONE 'America/Asuncion','YYYY-MM-DD HH24:MI') AS fecha,
             producto, marca, cantidad::float AS cantidad, unidad, codigo
-            FROM inventario ORDER BY id""").fetchall()
+            FROM inventario WHERE NOT archivado ORDER BY id""").fetchall()
 
 
 @app.post("/inventario", dependencies=[Depends(auth)])
@@ -80,6 +81,24 @@ def agregar(it: Item):
     return {"ok": True}
 
 
+class Cant(BaseModel):
+    cantidad: float
+
+
+@app.put("/inventario/{id}", dependencies=[Depends(auth)])
+def actualizar(id: int, it: Cant):
+    with conn() as c:
+        c.execute("UPDATE inventario SET cantidad=%s, fecha=now() WHERE id=%s", (it.cantidad, id))
+    return {"ok": True}
+
+
+@app.post("/inventario/cerrar", dependencies=[Depends(auth)])
+def cerrar():
+    with conn() as c:
+        c.execute("UPDATE inventario SET archivado=true WHERE NOT archivado")
+    return {"ok": True}
+
+
 @app.delete("/inventario/{id}", dependencies=[Depends(auth)])
 def borrar(id: int):
     with conn() as c:
@@ -90,7 +109,7 @@ def borrar(id: int):
 @app.delete("/inventario", dependencies=[Depends(auth)])
 def vaciar():
     with conn() as c:
-        c.execute("DELETE FROM inventario")
+        c.execute("DELETE FROM inventario WHERE NOT archivado")
     return Response(status_code=204)
 
 
