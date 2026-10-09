@@ -1,4 +1,4 @@
-import base64, json, os
+import base64, difflib, json, os, re, unicodedata
 import httpx, psycopg
 from psycopg.rows import dict_row
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Response, UploadFile
@@ -157,14 +157,56 @@ async def catalogo(codigo: str, solo: int = 0):
     raise HTTPException(404, "No encontrado")
 
 
+def norm(t):
+    t = unicodedata.normalize("NFD", str(t or "").lower())
+    return re.sub(r"[^a-z0-9]", "", "".join(ch for ch in t if unicodedata.category(ch) != "Mn"))
+
+
+def conocidos_db():
+    """Productos ya registrados (catálogo + inventario), sin repetidos."""
+    with conn() as c:
+        a = c.execute("SELECT producto,marca,unidad FROM catalogo").fetchall()
+        b = c.execute("SELECT producto,marca,unidad FROM inventario ORDER BY id DESC LIMIT 1000").fetchall()
+    d = {}
+    for r in a + b:
+        d.setdefault(norm(r["producto"] + " " + (r["marca"] or "")), r)
+    return list(d.values())[:400]
+
+
+def aplicar_coincidencia(res, lista):
+    if not lista or not isinstance(res, dict):
+        return res
+    hit = None
+    cl = norm(res.get("coincide", ""))
+    if cl:
+        hit = next((r for r in lista if norm(r["producto"]) == cl), None)
+    if not hit and res.get("producto"):
+        clave = norm(res["producto"] + res.get("marca", ""))
+        puntaje = lambda r: difflib.SequenceMatcher(None, norm(r["producto"] + (r["marca"] or "")), clave).ratio()
+        mejor = max(lista, key=puntaje)
+        if puntaje(mejor) >= 0.9:
+            hit = mejor
+    if hit:
+        res.update(producto=hit["producto"], marca=hit["marca"] or "", unidad=hit["unidad"] or "unidad", origen="catalogo")
+    return res
+
+
 @app.post("/reconocer", dependencies=[Depends(auth)])
 async def reconocer(file: UploadFile = File(...)):
     img = await file.read()
     if len(img) > 8_000_000:
         raise HTTPException(413, "Imagen demasiado grande")
+    lista = conocidos_db()
+    extra = ""
+    if lista:
+        extra = ("\n\nProductos ya registrados (nombre | marca):\n"
+                 + "\n".join(f"{r['producto']} | {r['marca'] or ''}" for r in lista)
+                 + '\nSi el producto de la foto es el MISMO que alguno de la lista (misma marca y misma presentación), '
+                   'agregá la clave "coincide" con su nombre EXACTO tal como figura en la lista; si es otro producto o '
+                   'otra presentación, "coincide":"".')
     body = {
         "contents": [{"parts": [
-            {"text": PROMPT},
+            {"text": PROMPT + extra},
             {"inline_data": {"mime_type": file.content_type or "image/jpeg",
                              "data": base64.b64encode(img).decode()}},
         ]}],
@@ -177,6 +219,6 @@ async def reconocer(file: UploadFile = File(...)):
         raise HTTPException(502, f"Gemini respondió {r.status_code}")
     try:
         texto = r.json()["candidates"][0]["content"]["parts"][0]["text"]
-        return json.loads(texto)
+        return aplicar_coincidencia(json.loads(texto), lista)
     except Exception:
         raise HTTPException(502, "Respuesta inesperada de Gemini")

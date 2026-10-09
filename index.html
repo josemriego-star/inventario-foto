@@ -32,7 +32,10 @@ input,select{width:100%;padding:11px;border:1px solid var(--bd);border-radius:10
 .btn{padding:12px;border:0;border-radius:10px;background:var(--ac);color:#fff;font-size:16px;font-weight:600;width:100%;margin-top:14px}
 .ghost{background:none;border:1px solid var(--bd);color:var(--tx)}
 .msg{font-size:14px;color:var(--mu);margin:8px 0}.err{color:var(--er)}
-img.pv{width:100%;max-height:200px;object-fit:cover;border-radius:10px;margin-bottom:8px}
+img.pv{width:100%;max-height:240px;object-fit:contain;background:var(--bg);border-radius:10px;margin-bottom:8px;cursor:zoom-in}
+#zoom{position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:9;display:flex;align-items:center;justify-content:center;cursor:zoom-out}
+#zoom.hide{display:none}
+#zoom img{max-width:100%;max-height:100%;object-fit:contain}
 .it{display:flex;justify-content:space-between;gap:8px;padding:10px 0;border-bottom:1px solid var(--bd)}
 .it:last-child{border:0}.it small{color:var(--mu);display:block}
 .it b{font-weight:600}.x{background:none;border:0;color:var(--er);font-size:18px}
@@ -72,6 +75,7 @@ img.pv{width:100%;max-height:200px;object-fit:cover;border-radius:10px;margin-bo
   <button class="btn ghost" id="bVaciar">Vaciar inventario</button>
   <div class="msg" id="st2"></div></div>
 </section>
+<div id="zoom" class="hide"><img id="zimg" alt=""></div>
 </main>
 <script>
 const $=id=>document.getElementById(id);
@@ -147,8 +151,8 @@ $("fFoto").onchange=async e=>{
   const {blob}=await shrink(f);
   const fd=new FormData();fd.append("file",blob,"foto.jpg");
   const d=await api("/reconocer",{method:"POST",body:fd});
-  if(d.codigo){try{const c=await api("/catalogo/"+encodeURIComponent(d.codigo)+"?solo=1");d.producto=c.producto;d.marca=c.marca;d.unidad=c.unidad||d.unidad}catch(e){}}
-  showForm(d,blob);st(d.producto?"Revisá los datos y completá la cantidad.":"No pude identificarlo. Completá a mano.",!d.producto);
+  if(d.codigo){try{const c=await api("/catalogo/"+encodeURIComponent(d.codigo)+"?solo=1");d.producto=c.producto;d.marca=c.marca;d.unidad=c.unidad||d.unidad;d.origen="catalogo"}catch(e){}}
+  showForm(d,blob);st(d.producto?(d.origen==="catalogo"?"Reconocido: ya está en tu inventario. Completá la cantidad.":"Producto nuevo. Revisá los datos y completá la cantidad."):"No pude identificarlo. Completá a mano.",!d.producto);
  }catch(er){showForm({},null);st("No se pudo reconocer. Completá a mano.",1)}
 };
 
@@ -202,5 +206,7 @@ $("bXls").onclick=async()=>{
   s2("Excel generado ✓");
  }catch(er){s2("No se pudo generar el Excel.")}
 };
+$("pv").onclick=()=>{$("zimg").src=$("pv").src;$("zoom").classList.remove("hide")};
+$("zoom").onclick=()=>$("zoom").classList.add("hide");
 ready=despertar();cargar();
 </script></body></html>
