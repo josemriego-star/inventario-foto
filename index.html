@@ -2,6 +2,7 @@
 <html lang="es"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Inventario por foto</title>
+<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-180.png">
@@ -74,7 +75,7 @@ img.pv{width:100%;max-height:200px;object-fit:cover;border-radius:10px;margin-bo
 </main>
 <script>
 const $=id=>document.getElementById(id);
-const API="https://inventario-foto.onrender.com"; // cambiá por la URL de tu servicio en Render
+const API="https://inventario-foto.onrender.com";
 const UN=["unidad","kg","g","litro","ml","caja","paquete","botella","lata","bolsa","atado","docena"];
 $("uni").innerHTML=UN.map(u=>`<option>${u}</option>`).join("");
 let inv=[];
@@ -146,25 +147,34 @@ $("fFoto").onchange=async e=>{
   const {blob}=await shrink(f);
   const fd=new FormData();fd.append("file",blob,"foto.jpg");
   const d=await api("/reconocer",{method:"POST",body:fd});
-  if(d.codigo){try{const c=await api("/catalogo/"+encodeURIComponent(d.codigo));d.producto=c.producto;d.marca=c.marca;d.unidad=c.unidad||d.unidad}catch(e){}}
+  if(d.codigo){try{const c=await api("/catalogo/"+encodeURIComponent(d.codigo)+"?solo=1");d.producto=c.producto;d.marca=c.marca;d.unidad=c.unidad||d.unidad}catch(e){}}
   showForm(d,blob);st(d.producto?"Revisá los datos y completá la cantidad.":"No pude identificarlo. Completá a mano.",!d.producto);
  }catch(er){showForm({},null);st("No se pudo reconocer. Completá a mano.",1)}
 };
 
 async function porCodigo(code){
  code=String(code).trim();if(!code)return;
+ st("Buscando producto…");
  let c=null;try{c=await api("/catalogo/"+encodeURIComponent(code))}catch(e){}
  showForm(c?{...c,codigo:code}:{codigo:code},null);
- st(c?"Producto encontrado en tu catálogo.":"Código nuevo: ingresá el nombre una vez y quedará guardado.");
+ const T={catalogo:"Producto encontrado en tu catálogo.",web:"Encontrado en una base abierta de productos. Revisá los datos.",ia:"Identificado con IA y búsqueda en Google. Verificá el nombre antes de guardar."};
+ st(c?(T[c.origen]||T.web):"No se encontró. Ingresá el nombre una vez y quedará guardado.");
 }
 $("fCod").onchange=async e=>{
  const f=e.target.files[0];e.target.value="";if(!f)return;
- if(!("BarcodeDetector" in window)){return st("Este navegador no lee códigos desde foto. Escribí el número.",1)}
+ st("Leyendo código…");
  try{
-  const {bm}=await shrink(f);
-  const r=await new BarcodeDetector().detect(bm);
-  r.length?porCodigo(r[0].rawValue):st("No se detectó ningún código. Probá de nuevo o escribilo.",1);
- }catch(er){st("No se pudo leer el código.",1)}
+  const {bm,blob}=await shrink(f);let code="";
+  if("BarcodeDetector" in window){try{const r=await new BarcodeDetector().detect(bm);if(r.length)code=r[0].rawValue}catch(x){}}
+  if(!code&&window.ZXing){
+   const Z=ZXing,h=new Map();
+   h.set(Z.DecodeHintType.TRY_HARDER,true);
+   h.set(Z.DecodeHintType.POSSIBLE_FORMATS,[Z.BarcodeFormat.EAN_13,Z.BarcodeFormat.EAN_8,Z.BarcodeFormat.UPC_A,Z.BarcodeFormat.UPC_E,Z.BarcodeFormat.CODE_128,Z.BarcodeFormat.CODE_39]);
+   const url=URL.createObjectURL(blob);
+   try{code=(await new Z.BrowserMultiFormatReader(h).decodeFromImageUrl(url)).getText()}finally{URL.revokeObjectURL(url)}
+  }
+  if(code){st("");porCodigo(code)}else st("No se detectó ningún código. Probá de nuevo o escribilo.",1);
+ }catch(er){st("No se pudo leer el código. Acercate, enfocá bien y probá de nuevo, o escribí el número.",1)}
 };
 $("bBuscar").onclick=()=>porCodigo($("codMan").value);
 

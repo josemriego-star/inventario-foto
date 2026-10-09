@@ -94,13 +94,67 @@ def vaciar():
     return Response(status_code=204)
 
 
+BASES_ABIERTAS = ["world.openfoodfacts.org", "world.openbeautyfacts.org", "world.openproductsfacts.org"]
+
+
+async def buscar_web(codigo: str):
+    """Bases abiertas: alimentos, cosmética/limpieza y otros productos."""
+    for host in BASES_ABIERTAS:
+        try:
+            async with httpx.AsyncClient(timeout=8) as c:
+                r = await c.get(f"https://{host}/api/v2/product/{codigo}.json",
+                                params={"fields": "product_name,product_name_es,brands,quantity"},
+                                headers={"User-Agent": "InventarioFoto/1.0"})
+            p = r.json().get("product") if r.status_code == 200 else None
+            nombre = ((p or {}).get("product_name_es") or (p or {}).get("product_name") or "").strip()
+            if not nombre:
+                continue
+            cant = (p.get("quantity") or "").strip()
+            marca = (p.get("brands") or "").split(",")[0].strip()
+            return {"producto": f"{nombre} {cant}".strip(), "marca": marca, "unidad": "unidad", "origen": "web"}
+        except Exception:
+            continue
+    return None
+
+
+async def buscar_ia(codigo: str):
+    """Gemini con búsqueda de Google: encuentra el producto por su código de barras."""
+    prompt = (f"Buscá en internet el producto con código de barras {codigo} "
+              "(si es posible, el que se vende en Paraguay o la región). "
+              'Respondé SOLO un JSON, sin texto extra ni markdown: {"producto":"nombre con presentación (ej: Gaseosa cola 2 L)",'
+              f'"marca":"","unidad":"una de: {UNIDADES}"}}. '
+              'Si no encontrás el producto con certeza, respondé {"producto":""}. No inventes.')
+    body = {"contents": [{"parts": [{"text": prompt}]}],
+            "tools": [{"google_search": {}}],
+            "generationConfig": {"temperature": 0}}
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+    try:
+        async with httpx.AsyncClient(timeout=45) as c:
+            r = await c.post(url, json=body, headers={"x-goog-api-key": GEMINI_API_KEY})
+        if r.status_code != 200:
+            return None
+        partes = r.json()["candidates"][0]["content"]["parts"]
+        texto = "".join(p.get("text", "") for p in partes)
+        d = json.loads(texto[texto.index("{"):texto.rindex("}") + 1])
+        if not str(d.get("producto", "")).strip():
+            return None
+        return {"producto": d["producto"].strip(), "marca": str(d.get("marca", "")).strip(),
+                "unidad": d.get("unidad") or "unidad", "origen": "ia"}
+    except Exception:
+        return None
+
+
 @app.get("/catalogo/{codigo}", dependencies=[Depends(auth)])
-def catalogo(codigo: str):
+async def catalogo(codigo: str, solo: int = 0):
     with conn() as c:
         r = c.execute("SELECT producto,marca,unidad FROM catalogo WHERE codigo=%s", (codigo,)).fetchone()
-    if not r:
-        raise HTTPException(404, "No está en el catálogo")
-    return r
+    if r:
+        return {**r, "origen": "catalogo"}
+    if not solo and codigo.isdigit() and 8 <= len(codigo) <= 14:
+        res = await buscar_web(codigo) or await buscar_ia(codigo)
+        if res:
+            return res
+    raise HTTPException(404, "No encontrado")
 
 
 @app.post("/reconocer", dependencies=[Depends(auth)])
